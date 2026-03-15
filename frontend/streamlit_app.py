@@ -1,11 +1,15 @@
 import streamlit as st
 import pandas as pd
+import requests
+
 
 st.set_page_config(
     page_title="NotifyService",
     page_icon="📧",
     layout="wide"
 )
+
+supported_domains = ["gmail.com", "minitts.net"]
 
 # ---------- SESSION STATE ----------
 if "email" not in st.session_state:
@@ -18,11 +22,16 @@ if "logs" not in st.session_state:
     st.session_state.logs = []
 
 
-# ---------- RESET FUNCTION ----------
+# ---------- FUNCTIONS ----------
 def reset_form():
     st.session_state.email = ""
     st.session_state.message = ""
 
+def valid_email(email: str):
+    domain = email.split('@')[1]
+    if domain in supported_domains:
+        return True
+    return False
 
 # ---------- SIDEBAR ----------
 st.sidebar.title("📧 NotifyService")
@@ -69,9 +78,31 @@ if menu == "Send Email":
         with b1:
             if st.button("Send Email", use_container_width=True):
 
-                if not email or not message:
-                    st.error("Please provide proper data.")
-                else:
+                if not message:
+                    st.error(f"Please provide message.")
+                    st.stop()
+                if not email:
+                    st.error(f"Please provide email address")
+                    st.stop()
+
+                if not valid_email(email):
+                    st.error(f'Invalid email address, Supported email domain is [gmail.com]')
+                    st.stop()
+
+                # Core Logic To sent email request to backend server
+                payload =  {
+                    "message": message,
+                    "receiver_email_address": email
+                }
+
+                response = requests.post(
+                    "http://localhost:8080/sent_mail",
+                    json=payload
+                )
+                response_data = response.json()
+                print(response_data)
+
+                if response.status_code == 200 and response_data['success']:
                     st.success(f"Email sent to {email}")
 
                     # Add log
@@ -79,6 +110,11 @@ if menu == "Send Email":
                         "email": email,
                         "message": message
                     })
+
+                else:
+                    st.error(f"Email sent request failed, Error: {response_data['success']}")
+
+
 
         with b2:
             st.button(
@@ -103,16 +139,18 @@ if menu == "Send Email":
 elif menu == "Email Logs":
 
     st.subheader("Email Delivery Logs")
-
-    if st.session_state.logs:
-
-        df = pd.DataFrame(st.session_state.logs)
-
-        st.dataframe(
-            df,
-            use_container_width=True
+    user_email = "soniaayush0044@gmail.com"
+    response = requests.get(
+                    "http://localhost:8080/mail_logs",
+                    params={"user_email": user_email}
+                )
+    print(response.json())
+    response_data = response.json()
+    if response.status_code==200:
+        df = pd.DataFrame(
+            response_data, columns=("id", "user_name", "user_email", "mail_content", "receiver_email_address", "status", "sent_at")
         )
-
+        st.dataframe(df)
     else:
         st.warning("No emails sent yet.")
 

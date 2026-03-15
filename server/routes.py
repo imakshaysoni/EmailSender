@@ -10,3 +10,7 @@ router.add_api_route(
     methods=["POST"],
     response_model=MailHandlerResponse
 )
+
+router.add_api_route("/mail_logs",
+                     ApiEndpoint.mail_logs,
+                     methods=["GET"])

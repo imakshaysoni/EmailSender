@@ -42,7 +42,31 @@ def init_db():
     cursor.execute(query)
     conn.commit()
 
-    cursor.close()
+    # create table
+    query = """
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            user_name VARCHAR(50) NOT NULL,
+            user_email VARCHAR(100) NOT NULL,
+            password TEXT NOT NULL
+        )
+        """
+    cursor.execute(query)
+    conn.commit()
+
+    # create table
+    query = """
+            CREATE TABLE IF NOT EXISTS refresh_token (
+                id SERIAL PRIMARY KEY,
+                user_name VARCHAR(50) NOT NULL,
+                type VARCHAR(50) NOT NULL,
+                jti VARCHAR(100) NOT NULL,
+                expire TIMESTAMP NOT NULL,
+                is_revoked BOOLEAN DEFAULT FALSE
+            )
+"""
+    cursor.execute(query)
+    conn.commit()
     conn.close()
 
     print("Table created successfully")

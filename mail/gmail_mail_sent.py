@@ -6,6 +6,9 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+from config.config import AdminDetails
+
+
 class GmailMailSent(SentMail):
 
     def __init__(self, user_name, user_email):
@@ -52,5 +55,5 @@ class GmailMailSent(SentMail):
     def setup_smtp_server(self):
         server = smtplib.SMTP("smtp.gmail.com", 587)
         server.starttls()
-        server.login(self.user_email, "bpwy exxc nkkn eofg")
+        server.login(self.user_email, AdminDetails.SECRET_KEY.value)
         return server

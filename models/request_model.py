@@ -6,3 +6,20 @@ class MailHandlerRequest(BaseModel):
 
 class MailLogsRequest(BaseModel):
     user_email: str
+
+
+class LoginDetails(BaseModel):
+    user_name: str
+    password: str
+
+class SignUpDetails(BaseModel):
+    user_name: str
+    email_address: str
+    password: str
+
+class ResetPasswordDetails(BaseModel):
+    user_name: str
+
+
+class RefreshToken(BaseModel):
+    refresh_token: str

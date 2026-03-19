@@ -1,0 +1,142 @@
+import uuid
+from os import access
+
+from fastapi import Depends, FastAPI, HTTPException, status
+from jose import JWTError, jwt
+from datetime import datetime, timedelta
+
+from database.database import Database
+from mail.gmail_mail_sent import GmailMailSent
+from models.request_model import MailHandlerRequest
+from models.response_model import AuthServiceResponseModel
+
+from config.config import AdminDetails, PEPPER, AuthTokenConfig, TokenData
+
+from passlib.context import CryptContext
+from fastapi.security import OAuth2PasswordBearer
+from typing import Annotated
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+
+
+class AuthService():
+
+    def __init__(self):
+        self.db = Database()
+        self.pwd_context = CryptContext(schemes=["argon2"], deprecated="auto",  bcrypt__rounds=12)
+
+    @staticmethod
+    async def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]):
+        credentials_exception = HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        try:
+            print("Verifying the token")
+            payload = jwt.decode(token, AuthTokenConfig.SECRET_KEY.value, algorithms=[AuthTokenConfig.ALGORITHM.value])
+            username = payload.get("sub")
+            if username is None:
+                raise credentials_exception
+            token_data = TokenData(username=username)
+            print("Token Verified")
+        except JWTError:
+            print("Token Not varified")
+            raise credentials_exception
+
+        db = Database()
+        user = db.get_user(user_name=token_data.username)
+        if user is None:
+            raise credentials_exception
+        return user
+
+
+    def _hash_password(self, password: str):
+        return self.pwd_context.hash(password + PEPPER)
+
+    def _verify_password(self, plain, hashed):
+        return self.pwd_context.verify(plain + PEPPER, hashed)
+
+    def _create_access_token(self, data: dict):
+        to_encode = data.copy()
+        to_encode.update({"type": "access"})
+        expire = datetime.utcnow() + timedelta(minutes=AuthTokenConfig.ACCESS_TOKEN_EXPIRE_MINUTES.value)
+        to_encode.update({"exp": expire})
+        return jwt.encode(to_encode, AuthTokenConfig.SECRET_KEY.value, algorithm=AuthTokenConfig.ALGORITHM.value)
+
+    def _create_refresh_token(self, data: dict):
+        to_encode = data.copy()
+        jti = str(uuid.uuid4())
+        to_encode.update({"type": "refresh", "jti": jti})
+        expire = datetime.utcnow() + timedelta(minutes=AuthTokenConfig.REFRESH_TOKEN_EXPIRE_MINUTES.value)
+        to_encode.update({"exp": expire})
+
+        # Save refresh token database
+        self.db.save_refresh_token(to_encode)
+        return jwt.encode(to_encode, AuthTokenConfig.SECRET_KEY.value, algorithm=AuthTokenConfig.ALGORITHM.value)
+
+    def refresh_access_token(self, refresh_token: str):
+
+        try:
+            payload = jwt.decode(refresh_token, AuthTokenConfig.SECRET_KEY.value, algorithms=[AuthTokenConfig.ALGORITHM.value])
+
+            if payload["type"] != "refresh":
+                raise AuthServiceResponseModel(success=False, message="Invalid Token")
+
+            jti = payload["jti"]
+
+            token_in_db, is_revoked = self.db.get_token_from_db(jti)
+
+            if not token_in_db or is_revoked:
+                return AuthServiceResponseModel(success=False, message="Token Revoked")
+
+            access_token =  self._create_access_token(data = {"sub": payload["sub"]})
+            return AuthServiceResponseModel(success=True, message="New access token created.",
+                                            access_token=access_token)
+        except Exception as err:
+            return AuthServiceResponseModel(success=False, message=f"{err}")
+
+    def login(self, user_name: str, password: str):
+        try:
+            user_details = self.db.get_user(user_name)
+            if user_details.id:
+                if self._verify_password(password, user_details.password):
+                    access_token = self._create_access_token(
+                        data = {"sub": user_details.user_name}
+                    )
+                    refresh_token = self._create_refresh_token(data = {"sub": user_details.user_name})
+                    return AuthServiceResponseModel(success=True, message="Login Successfull.", id=user_details.id, access_token=access_token, refresh_token=refresh_token)
+                return AuthServiceResponseModel(success=False, message="Invalid Password")
+            else:
+                return AuthServiceResponseModel(success=False, message="User does not exist")
+        except Exception as err:
+            return AuthServiceResponseModel(success=False, message=f"{str(err)}")
+
+    def sign_up(self, user_name:str, password: str, email_address: str):
+        try:
+            user_details = self.db.get_user(user_name)
+            if user_details:
+                AuthServiceResponseModel(success=False, message="User already exist")
+
+            hashed_password = self._hash_password(password)
+            user_id = self.db.insert_user(user_name, hashed_password, email_address)
+            return AuthServiceResponseModel(success=True, message="Signup successfull.", id=user_id)
+        except Exception as err:
+            print(f"Err: {err}")
+            return AuthServiceResponseModel(success=False, message=f"{str(err)}")
+
+    def reset_password(self, user_name):
+        try:
+            user_details = self.db.get_user(user_name)
+
+            if user_details.id is None:
+                return AuthServiceResponseModel(success=False, message="User does not exist")
+
+            new_password = str(uuid.uuid4())
+            hashed_new_password = self._hash_password(new_password)
+            self.db.reset_password(user_name, hashed_new_password)
+            mail = GmailMailSent(AdminDetails.USER_NAME.value, AdminDetails.EMAIL_ADDRESS.value)
+            mail_data = MailHandlerRequest(message=f"Password reset, your new password is {new_password}, please login with this password.", receiver_email_address=user_details.email_address)
+            mail.sent_mail(mail_data)
+            return AuthServiceResponseModel(success=False, message="we have reset your password, please check your mail for new password")
+        except Exception as err:
+            return AuthServiceResponseModel(success=False, message=f"{str(err)}")
